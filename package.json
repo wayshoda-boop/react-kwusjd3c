@@ -1,0 +1,413 @@
+import React, { useState } from 'react';
+
+// --- PALETTES & COMPOSANTS VISUELS PIXEL ART ---
+const PALETTES = [
+  { name: 'Néon Or', primary: '#f59e0b', secondary: '#78350f', accent: '#fef08a' },
+  { name: 'Cyber Cyan', primary: '#06b6d4', secondary: '#164e63', accent: '#a5f3fc' },
+  { name: 'Ombre Violette', primary: '#a855f7', secondary: '#581c87', accent: '#f3e8ff' },
+  { name: 'Acier Rouge', primary: '#ef4444', secondary: '#7f1d1d', accent: '#fecaca' }
+];
+
+// Générateur d'Avatar Pixel Art
+const PixelAvatar = ({ seed = 1, size = 48, role = 'Commandant' }) => {
+  const palette = PALETTES[seed % PALETTES.length];
+  // Pattern 5x5 symétrique
+  const grid = [
+    [0, 1, 1, 1, 0],
+    [1, (seed * 3) % 2, 1, (seed * 7) % 2, 1],
+    [1, 1, (seed * 5) % 2, 1, 1],
+    [0, 1, (seed * 2) % 2, 1, 0],
+    [1, 0, 0, 0, 1]
+  ];
+
+  return (
+    <div 
+      className="relative flex items-center justify-center border-2 border-slate-700 bg-slate-900 rounded overflow-hidden shadow-md"
+      style={{ width: size, height: size }}
+    >
+      <div className="grid grid-cols-5 gap-0.5 w-4/5 h-4/5">
+        {grid.flatMap((row, rowIndex) =>
+          row.map((cell, colIndex) => {
+            let color = 'transparent';
+            if (cell === 1) color = palette.primary;
+            if (cell === 2 || (rowIndex === 2 && colIndex === 2)) color = palette.accent;
+            if (rowIndex === 0 || rowIndex === 4) color = cell === 1 ? palette.secondary : 'transparent';
+            return (
+              <div 
+                key={`${rowIndex}-${colIndex}`} 
+                style={{ backgroundColor: color }}
+                className="w-full h-full rounded-sm"
+              />
+            );
+          })
+        )}
+      </div>
+      {/* Visière / Halo Néon */}
+      <div 
+        className="absolute inset-x-0 h-1 top-1/3 opacity-70 blur-[1px]"
+        style={{ backgroundColor: palette.accent }}
+      />
+    </div>
+  );
+};
+
+export default function App() {
+  // --- ÉTAT GLOBAL ---
+  const [activeTab, setActiveTab] = useState('map'); // 'map', 'units', 'camp'
+  const [renown, setRenown] = useState(120); // Renommée déterminant la taille du territoire
+  
+  // Carte Hexagonale (Taille 7x7)
+  const MAP_SIZE = 7;
+  
+  // Commandants du Joueur (avec position et points de déplacement)
+  const [commandants, setCommandants] = useState([
+    {
+      id: 1,
+      name: 'Vaelen',
+      title: 'L\'Inflexible',
+      level: 3,
+      seed: 12,
+      q: 2, r: 2, // Coordonnées hex
+      moveRange: 2,
+      currentMoves: 2,
+      maxMoves: 2,
+      canAttack: true,
+      squadSize: 4,
+      squad: ['Chevalier Plasma', 'Arbalétrier Laser', 'Lancier Voltaïque', 'Médic-Nanite']
+    },
+    {
+      id: 2,
+      name: 'Kaelen',
+      title: 'Traqueur de l\'Ombre',
+      level: 2,
+      seed: 45,
+      q: 1, r: 3,
+      moveRange: 3,
+      currentMoves: 3,
+      maxMoves: 3,
+      canAttack: true,
+      squadSize: 3,
+      squad: ['Arbalétrier Laser', 'Arbalétrier Laser', 'Lancier Voltaïque']
+    }
+  ]);
+
+  const [selectedCmdId, setSelectedCmdId] = useState(1);
+
+  // Déterminer le rayon du territoire en fonction de la Renommée
+  const territoryRadius = Math.min(3, Math.floor(renown / 100) + 1);
+
+  // Utilitaires Hexagones (Coordonnées Axial: q, r)
+  const getHexDistance = (q1, r1, q2, r2) => {
+    return (Math.abs(q1 - q2) + Math.abs(q1 + r1 - q2 - r2) + Math.abs(r1 - r2)) / 2;
+  };
+
+  const isCapital = (q, r) => q === 2 && r === 2;
+
+  const isPlayerTerritory = (q, r) => {
+    return getHexDistance(2, 2, q, r) <= territoryRadius;
+  };
+
+  const selectedCommandant = commandants.find(c => c.id === selectedCmdId);
+
+  // Gérer le déplacement autonome d'un Commandant
+  const handleHexClick = (q, r) => {
+    if (!selectedCommandant) return;
+
+    const dist = getHexDistance(selectedCommandant.q, selectedCommandant.r, q, r);
+
+    // Déplacement
+    if (dist > 0 && dist <= selectedCommandant.currentMoves) {
+      setCommandants(prev =>
+        prev.map(c =>
+          c.id === selectedCmdId
+            ? { ...c, q, r, currentMoves: c.currentMoves - dist }
+            : c
+        )
+      );
+    }
+  };
+
+  // Passer le tour : Réinitialise les mouvements et les attaques
+  const handleEndTurn = () => {
+    setCommandants(prev =>
+      prev.map(c => ({
+        ...c,
+        currentMoves: c.maxMoves,
+        canAttack: true
+      }))
+    );
+  };
+
+  // --- RENDU DES GRILLES HEXAGONALES ---
+  const renderMapHexes = () => {
+    const hexes = [];
+    for (let r = 0; r < MAP_SIZE; r++) {
+      for (let q = 0; q < MAP_SIZE; q++) {
+        const isTerritory = isPlayerTerritory(q, r);
+        const isCap = isCapital(q, r);
+        
+        // Commandants sur cette case
+        const cmdOnHex = commandants.filter(c => c.q === q && c.r === r);
+        
+        // Brouillard de guerre : hors territoire et à plus de 2 cases d'un commandant
+        const inSight = commandants.some(c => getHexDistance(c.q, c.r, q, r) <= 2) || isTerritory;
+
+        // Calcul distance sélection
+        const distFromSelected = selectedCommandant 
+          ? getHexDistance(selectedCommandant.q, selectedCommandant.r, q, r)
+          : 99;
+        const isReachable = distFromSelected > 0 && distFromSelected <= (selectedCommandant?.currentMoves || 0);
+
+        hexes.push(
+          <div
+            key={`${q}-${r}`}
+            onClick={() => handleHexClick(q, r)}
+            className={`
+              relative w-16 h-16 m-1 flex flex-col items-center justify-center cursor-pointer
+              transition-all duration-200 border-2 rounded-xl
+              ${!inSight 
+                ? 'bg-slate-950 border-slate-900 opacity-60' 
+                : isCap
+                  ? 'bg-amber-950/60 border-amber-500 shadow-lg shadow-amber-500/20'
+                  : isTerritory 
+                    ? 'bg-cyan-950/40 border-cyan-500/50' 
+                    : 'bg-slate-800/80 border-slate-700'}
+              ${isReachable ? 'ring-2 ring-emerald-400 border-emerald-400 bg-emerald-950/30' : ''}
+              hover:scale-105 hover:z-10
+            `}
+          >
+            {/* Indication Visuelle Capitale / Hex */}
+            {isCap && (
+              <span className="text-[10px] font-bold text-amber-400 tracking-wider uppercase mb-1">
+                Capitale
+              </span>
+            )}
+
+            {/* Affichage des Commandants */}
+            <div className="flex gap-1 z-10">
+              {cmdOnHex.map(c => (
+                <div 
+                  key={c.id} 
+                  onClick={(e) => { e.stopPropagation(); setSelectedCmdId(c.id); }}
+                  className={`relative ${selectedCmdId === c.id ? 'scale-110 ring-2 ring-amber-400 rounded' : ''}`}
+                >
+                  <PixelAvatar seed={c.seed} size={28} />
+                </div>
+              ))}
+            </div>
+
+            {/* Inconnu / Brouillard */}
+            {!inSight && (
+              <span className="text-slate-600 text-xs font-mono">?</span>
+            )}
+
+            {/* Coordonnées discrètes */}
+            <span className="absolute bottom-0.5 right-1 text-[8px] text-slate-500 font-mono">
+              {q},{r}
+            </span>
+          </div>
+        );
+      }
+    }
+    return hexes;
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans flex flex-col">
+      
+      {/* HEADER DE NAVIGATION (3 ONGLETS) */}
+      <header className="border-b border-slate-800 bg-slate-900/90 backdrop-blur px-6 py-3 flex items-center justify-between sticky top-0 z-50">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-amber-500/20 border border-amber-500 rounded flex items-center justify-center text-amber-400 font-bold text-lg">
+            🏰
+          </div>
+          <div>
+            <h1 className="font-extrabold text-slate-100 tracking-wide text-sm uppercase">Royaume Cyber-Médiéval</h1>
+            <p className="text-xs text-amber-400 font-medium">Renommée: {renown} PV | Territoire Nv. {territoryRadius}</p>
+          </div>
+        </div>
+
+        {/* ONGLETS */}
+        <nav className="flex bg-slate-950 p-1 rounded-lg border border-slate-800">
+          <button
+            onClick={() => setActiveTab('map')}
+            className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${
+              activeTab === 'map' 
+                ? 'bg-amber-500 text-slate-950 shadow-md' 
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            🗺️ Carte du Monde
+          </button>
+          <button
+            onClick={() => setActiveTab('units')}
+            className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${
+              activeTab === 'units' 
+                ? 'bg-amber-500 text-slate-950 shadow-md' 
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            ⚔️ Commandants & Unités
+          </button>
+          <button
+            onClick={() => setActiveTab('camp')}
+            className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${
+              activeTab === 'camp' 
+                ? 'bg-amber-500 text-slate-950 shadow-md' 
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            ⛺ Campement
+          </button>
+        </nav>
+
+        {/* ACTION FIN DE TOUR */}
+        <button
+          onClick={handleEndTurn}
+          className="bg-slate-800 hover:bg-slate-700 border border-slate-600 text-amber-400 font-bold text-xs px-4 py-2 rounded shadow transition-all active:scale-95"
+        >
+          Fin de Tour ⏳
+        </button>
+      </header>
+
+      {/* CONTENU PRINCIPAL */}
+      <main className="flex-1 p-6 max-w-7xl w-full mx-auto">
+        
+        {/* --- ONGLET 1 : CARTE DU MONDE --- */}
+        {activeTab === 'map' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            {/* La Grille de la Carte */}
+            <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-col items-center justify-center shadow-xl">
+              <div className="mb-4 flex items-center justify-between w-full text-xs text-slate-400 border-b border-slate-800 pb-2">
+                <span>Territoire actif : <strong className="text-cyan-400">Rayon {territoryRadius} Hex</strong></span>
+                <span className="text-emerald-400">Cliquez sur une case verte pour vous déplacer</span>
+              </div>
+
+              <div className="grid grid-cols-7 gap-1 bg-slate-950/50 p-4 rounded-xl border border-slate-800/80">
+                {renderMapHexes()}
+              </div>
+            </div>
+
+            {/* Panneau Lateral Commandant Sélectionné */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col gap-4 shadow-xl">
+              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800 pb-2">
+                Commandant Actif
+              </h2>
+
+              {selectedCommandant ? (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3 bg-slate-950 p-3 rounded-lg border border-slate-800">
+                    <PixelAvatar seed={selectedCommandant.seed} size={52} />
+                    <div>
+                      <h3 className="font-bold text-slate-100">{selectedCommandant.name}</h3>
+                      <p className="text-xs text-amber-400">{selectedCommandant.title}</p>
+                      <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded mt-1 inline-block">
+                        Niveau {selectedCommandant.level}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Statistiques Déplacements & Attaque */}
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="bg-slate-950 p-2.5 rounded border border-slate-800">
+                      <span className="text-slate-400 block text-[10px]">Déplacements</span>
+                      <strong className="text-cyan-400 text-sm">
+                        {selectedCommandant.currentMoves} / {selectedCommandant.maxMoves} PM
+                      </strong>
+                    </div>
+                    <div className="bg-slate-950 p-2.5 rounded border border-slate-800">
+                      <span className="text-slate-400 block text-[10px]">État Combat</span>
+                      <strong className={selectedCommandant.canAttack ? 'text-emerald-400 text-sm' : 'text-rose-400 text-sm'}>
+                        {selectedCommandant.canAttack ? 'Prêt au Combat' : 'Recharge (1 T)'}
+                      </strong>
+                    </div>
+                  </div>
+
+                  {/* Escouade */}
+                  <div>
+                    <h4 className="text-xs font-semibold text-slate-400 mb-2">
+                      Escouade ({selectedCommandant.squad.length} / {selectedCommandant.squadSize})
+                    </h4>
+                    <div className="space-y-1.5">
+                      {selectedCommandant.squad.map((unit, idx) => (
+                        <div key={idx} className="bg-slate-950 px-3 py-1.5 rounded border border-slate-800 text-xs flex items-center justify-between">
+                          <span className="text-slate-200">{unit}</span>
+                          <span className="text-[10px] text-amber-400/80 font-mono">Pixel Ready</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">Sélectionnez un Commandant sur la carte.</p>
+              )}
+            </div>
+
+          </div>
+        )}
+
+        {/* --- ONGLET 2 : COMMANDANTS & UNITÉS (CODEX) --- */}
+        {activeTab === 'units' && (
+          <div className="space-y-6">
+            <div className="border-b border-slate-800 pb-3">
+              <h2 className="text-lg font-bold text-slate-100">Codex des Commandants & Escouades</h2>
+              <p className="text-xs text-slate-400">Gérez vos troupes et examinez leurs variantes Pixel Art uniques.</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {commandants.map(cmd => (
+                <div key={cmd.id} className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4 shadow-lg">
+                  <div className="flex items-center gap-4 border-b border-slate-800 pb-3">
+                    <PixelAvatar seed={cmd.seed} size={60} />
+                    <div>
+                      <h3 className="font-extrabold text-slate-100 text-base">{cmd.name}</h3>
+                      <p className="text-xs text-amber-400 font-medium">{cmd.title}</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">Position : Hex ({cmd.q}, {cmd.r})</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="text-xs font-semibold text-slate-300 mb-2">Composition de l'Escouade</h4>
+                    <div className="grid grid-cols-2 gap-2">
+                      {cmd.squad.map((u, i) => (
+                        <div key={i} className="bg-slate-950 p-2 rounded border border-slate-800 flex items-center gap-2">
+                          <PixelAvatar seed={cmd.seed + i + 1} size={24} />
+                          <span className="text-xs text-slate-300">{u}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* --- ONGLET 3 : CAMPEMENT --- */}
+        {activeTab === 'camp' && (
+          <div className="max-w-2xl mx-auto bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4 shadow-2xl">
+            <div className="border-b border-slate-800 pb-3">
+              <h2 className="text-lg font-bold text-amber-400 flex items-center gap-2">
+                ⛺ Journal du Campement
+              </h2>
+              <p className="text-xs text-slate-400">Rapports de bataille et échanges d'ambiance entre vos Commandants.</p>
+            </div>
+
+            <div className="bg-slate-950 border border-slate-800 rounded-lg p-4 font-mono text-xs text-slate-300 space-y-3">
+              <div className="border-l-2 border-amber-500 pl-3">
+                <span className="text-amber-400 font-bold">[Rapport de Renommée]</span>
+                <p className="mt-0.5 text-slate-400">Votre Renommée actuelle ({renown} pts) maintient les frontières du Royaume sur un rayon de {territoryRadius} cases.</p>
+              </div>
+              <div className="border-l-2 border-cyan-500 pl-3">
+                <span className="text-cyan-400 font-bold">[Vaelen l'Inflexible]</span>
+                <p className="mt-0.5 text-slate-400">"Les patrouilles aux frontières signalent des mouvements dans le brouillard. Mes hommes sont prêts."</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </main>
+    </div>
+  );
+}
